@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>テトリス</title>
+    <style>
+        body {
+            background: #222;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+        canvas {
+            border: 3px solid #fff;
+            background: #000;
+        }
+        #ui-container {
+            margin-left: 20px;
+            width: 150px;
+        }
+        #start-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            display: block;
+            margin: 20px auto;
+        }
+        #next-block-canvas {
+            border-width: 2px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>テトリス</h1>
+    <div style="display: flex; align-items: flex-start;">
+        <canvas id="tetris-board" width="300" height="600"></canvas>
+        <div id="ui-container">
+            <h2>スコア</h2>
+            <p id="score" style="font-size: 2em; font-weight: bold; margin: 10px 0;">0</p>
+            
+            <h2 style="margin-top: 20px;">NEXT</h2>
+            <canvas id="next-block-canvas" width="120" height="120"></canvas>
+            
+            <button id="start-button">スタート / リセット</button>
+        </div>
+    </div>
+
+    <audio id="clear-sound" src="clear.mp3" preload="auto"></audio>
+    <audio id="bgm-music" src="music.mp3" preload="auto" loop></audio>
+    <audio id="drop-sound" src="drop.mp3" preload="auto"></audio>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM要素の取得 ---
+            const canvas = document.getElementById('tetris-board');
+            const context = canvas.getContext('2d');
+            const scoreElement = document.getElementById('score');
+            const startButton = document.getElementById('start-button');
+            const nextCanvas = document.getElementById('next-block-canvas');
+            const nextContext = nextCanvas.getContext('2d');
+            const clearSound = document.getElementById('clear-sound');
+            const bgmMusic = document.getElementById('bgm-music');
+            // 【追加】接地音用audio要素の取得
+            const dropSound = document.getElementById('drop-sound');
+
+            // --- 定数定義 ---
+            const ROWS = 20;
+            const COLS = 10;
+            const BLOCK_SIZE = canvas.width / COLS;
+            const SHAPES = [
+                [[1, 1, 1, 1]], [[1, 1, 0], [0, 1, 1]], [[0, 1, 1], [1, 1, 0]], [[1, 1, 1], [0, 1, 0]],
+                [[1, 1, 1], [1, 0, 0]], [[1, 1, 1], [0, 0, 1]], [[1, 1], [1, 1]]
+            ];
+            const COLORS = ['#000', '#3498db', '#e74c3c', '#2ecc71', '#9b59b6', '#f39c12', '#1abc9c', '#f1c40f'];
+            const GLOWING_COLOR = '#fff';
+
+            // --- ゲーム状態変数 ---
+            let board, score, gameLoopId, lastTime, isPaused;
+            let currentBlock, currentBlockId, currentX, currentY;
+            let nextBlock, nextBlockId;
+
+            // --- 関数定義 ---
+            
+            function drawBoard() {
+                context.fillStyle = '#000';
+                context.fillRect(0, 0, canvas.width, canvas.height);
+                if (!board) return;
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = 0; x < COLS; x++) {
+                        if (board[y][x]) {
+                            drawBlockOnMainCanvas(x, y, board[y][x]);
+                        }
+                    }
+                }
+            }
+            
+            function drawBlockOnMainCanvas(x, y, id) {
+                context.fillStyle = id === -1 ? GLOWING_COLOR : COLORS[id];
+                context.fillRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+                context.strokeStyle = '#222';
+                context.strokeRect(x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+            }
+            
+            function drawCurrentBlock() {
+                if (!currentBlock) return;
+                for (let y = 0; y < currentBlock.length; y++) {
+                    for (let x = 0; x < currentBlock[y].length; x++) {
+                        if (currentBlock[y][x]) {
+                            drawBlockOnMainCanvas(currentX + x, currentY + y, currentBlockId);
+                        }
+                    }
+                }
+            }
+
+            function drawNextBlock() {
+                nextContext.fillStyle = '#000';
+                nextContext.fillRect(0, 0, nextCanvas.width, nextCanvas.height);
+                if (!nextBlock) return;
+                const shape = nextBlock, color = COLORS[nextBlockId], blockSize = nextCanvas.width / 4;
+                const offsetX = (nextCanvas.width - shape[0].length * blockSize) / 2;
+                const offsetY = (nextCanvas.height - shape.length * blockSize) / 2;
+                nextContext.fillStyle = color;
+                for (let y = 0; y < shape.length; y++) {
+                    for (let x = 0; x < shape[y].length; x++) {
+                        if (shape[y][x]) {
+                            nextContext.fillRect(offsetX + x * blockSize, offsetY + y * blockSize, blockSize, blockSize);
+                            nextContext.strokeStyle = '#222';
+                            nextContext.strokeRect(offsetX + x * blockSize, offsetY + y * blockSize, blockSize, blockSize);
+                        }
+                    }
+                }
+            }
+            
+            function advanceToNextBlock() {
+                if(isPaused) return;
+                currentBlock = nextBlock;
+                currentBlockId = nextBlockId;
+                currentX = Math.floor((COLS - currentBlock[0].length) / 2);
+                currentY = 0;
+                
+                nextBlockId = Math.floor(Math.random() * SHAPES.length) + 1;
+                nextBlock = SHAPES[nextBlockId - 1];
+                
+                drawNextBlock();
+                if (!isValidMove(currentX, currentY, currentBlock)) {
+                    showGameOver();
+                }
+            }
+            
+            function isValidMove(x, y, shape) {
+                for (let row = 0; row < shape.length; row++) {
+                    for (let col = 0; col < shape[row].length; col++) {
+                        if (shape[row][col]) {
+                            const newX = x + col, newY = y + row;
+                            if (newX < 0 || newX >= COLS || newY >= ROWS || (board[newY] && board[newY][newX])) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                return true;
+            }
+            
+            function placeBlock() {
+                if (!currentBlock) return;
+                for (let y = 0; y < currentBlock.length; y++) {
+                    for (let x = 0; x < currentBlock[y].length; x++) {
+                        if (currentBlock[y][x]) {
+                            board[currentY + y][currentX + x] = currentBlockId;
+                        }
+                    }
+                }
+                currentBlock = null; 
+            }
+            
+            function handleLineClear() {
+                let linesToClear = [];
+                for (let y = ROWS - 1; y >= 0; y--) {
+                    if (board[y].every(cell => cell > 0)) { linesToClear.push(y); }
+                }
+                if (linesToClear.length > 0) {
+                    if (clearSound) {
+                        clearSound.currentTime = 0;
+                        clearSound.play();
+                    }
+                    isPaused = true;
+                    for (const y of linesToClear) {
+                        for (let x = 0; x < COLS; x++) { board[y][x] = -1; }
+                    }
+                    setTimeout(() => {
+                        const clearedCount = linesToClear.length;
+                        board = board.filter(row => row[0] !== -1);
+                        for (let i = 0; i < clearedCount; i++) {
+                            board.unshift(Array(COLS).fill(0));
+                        }
+                        score += clearedCount * 100 * clearedCount;
+                        scoreElement.textContent = score;
+                        isPaused = false;
+                        advanceToNextBlock();
+                    }, 500);
+                } else {
+                    advanceToNextBlock();
+                }
+            }
+            
+            function rotate() {
+                const newShape = currentBlock[0].map((_, colIndex) => currentBlock.map(row => row[colIndex]).reverse());
+                if (isValidMove(currentX, currentY, newShape)) { currentBlock = newShape; }
+            }
+            
+            function drop() {
+                if (!currentBlock) return;
+                if (isValidMove(currentX, currentY + 1, currentBlock)) {
+                    currentY++;
+                } else {
+                    // 【追加】接地音を再生
+                    if (dropSound) {
+                        dropSound.currentTime = 0;
+                        dropSound.play();
+                    }
+                    placeBlock();
+                    handleLineClear();
+                }
+            }
+            
+            function showGameOver() {
+                cancelAnimationFrame(gameLoopId);
+                gameLoopId = null;
+                if (bgmMusic) {
+                    bgmMusic.pause();
+                }
+                alert('ゲームオーバー！ スコア: ' + score);
+            }
+
+            function gameLoop(time) {
+                if (!lastTime) { lastTime = time; }
+                if (!isPaused) {
+                    const deltaTime = time - lastTime;
+                    if (deltaTime > 1000) {
+                        drop();
+                        lastTime = time;
+                    }
+                }
+                drawBoard();
+                drawCurrentBlock();
+                gameLoopId = requestAnimationFrame(gameLoop);
+            }
+            
+            function startGame() {
+                if (gameLoopId) { cancelAnimationFrame(gameLoopId); }
+                
+                if (bgmMusic) {
+                    bgmMusic.currentTime = 0;
+                    bgmMusic.play().catch(e => console.log("BGMの再生がブラウザにブロックされました。"));
+                }
+
+                isPaused = false;
+                board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+                score = 0;
+                scoreElement.textContent = score;
+                lastTime = 0;
+
+                nextBlockId = Math.floor(Math.random() * SHAPES.length) + 1;
+                nextBlock = SHAPES[nextBlockId - 1];
+                advanceToNextBlock();
+                gameLoopId = requestAnimationFrame(gameLoop);
+            }
+
+            // --- イベントリスナー ---
+            startButton.addEventListener('click', startGame);
+
+            document.addEventListener('keydown', (e) => {
+                if (!gameLoopId || isPaused || !currentBlock) return; 
+                switch (e.code) {
+                    case 'ArrowLeft':
+                        if (isValidMove(currentX - 1, currentY, currentBlock)) currentX--;
+                        break;
+                    case 'ArrowRight':
+                        if (isValidMove(currentX + 1, currentY, currentBlock)) currentX++;
+                        break;
+                    case 'ArrowDown':
+                        drop();
+                        lastTime = performance.now();
+                        break;
+                    case 'Space':
+                        e.preventDefault();
+                        rotate();
+                        break;
+                }
+                if (!isPaused) {
+                    drawBoard();
+                    drawCurrentBlock();
+                }
+            });
+            
+            // --- 初期化 ---
+            board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+            drawBoard();
+            drawNextBlock();
+        });
+    </script>
+
+</body>
+</html>
