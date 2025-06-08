@@ -32,6 +32,15 @@
         #next-block-canvas {
             border-width: 2px;
         }
+        /* 【追加】操作説明用のスタイル */
+        #controls-info {
+            margin-top: 25px;
+            font-size: 14px;
+            color: #bbb;
+        }
+        #controls-info p {
+            margin: 4px 0;
+        }
     </style>
 </head>
 <body>
@@ -47,6 +56,12 @@
             <canvas id="next-block-canvas" width="120" height="120"></canvas>
             
             <button id="start-button">スタート / リセット</button>
+
+            <div id="controls-info">
+                <p>スペース：回転</p>
+                <p>←↓→：移動</p>
+            </div>
+            
         </div>
     </div>
 
@@ -65,7 +80,6 @@
             const nextContext = nextCanvas.getContext('2d');
             const clearSound = document.getElementById('clear-sound');
             const bgmMusic = document.getElementById('bgm-music');
-            // 【追加】接地音用audio要素の取得
             const dropSound = document.getElementById('drop-sound');
 
             // --- 定数定義 ---
@@ -218,7 +232,6 @@
                 if (isValidMove(currentX, currentY + 1, currentBlock)) {
                     currentY++;
                 } else {
-                    // 【追加】接地音を再生
                     if (dropSound) {
                         dropSound.currentTime = 0;
                         dropSound.play();
